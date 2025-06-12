@@ -432,25 +432,24 @@ inner join CMS_ContentLanguage on ContentLanguageID = WebsiteChannelPrimaryConte
             var langIdToName = await GetContentLanguageIDToName();
 
             var previewEnabled = HttpContext != null && GetPreviewEnabled(HttpContext);
-            var reader = await _progressiveCache.LoadAsync(async cs => {
+            var ds = await _progressiveCache.LoadAsync(async cs => {
 
                 if (cs.Cached) {
                     cs.CacheDependency = CacheHelper.GetCacheDependency($"{WebPageUrlPathInfo.OBJECT_TYPE}|all");
                 }
 
-                return await _webPageUrlPathInfoProvider.Get()
+                return DatasetFromReader(await _webPageUrlPathInfoProvider.Get()
                 .Source(x => x.InnerJoin<WebPageItemInfo>(nameof(WebPageUrlPathInfo.WebPageUrlPathWebPageItemID), nameof(WebPageItemInfo.WebPageItemID)))
                 .Source(x => x.InnerJoin<ContentItemInfo>(nameof(WebPageItemInfo.WebPageItemContentItemID), nameof(ContentItemInfo.ContentItemID)))
                 .Source(x => x.InnerJoin<DataClassInfo>(nameof(ContentItemInfo.ContentItemContentTypeID), nameof(DataClassInfo.ClassID)))
                 .WhereEquals(nameof(WebPageUrlPathInfo.WebPageUrlPath), relativeUrl.TrimStart('~').TrimStart('/'))
                 .WhereEquals(nameof(WebPageUrlPathInfo.WebPageUrlPathWebsiteChannelID), websiteChannelID)
                 .Columns(nameof(WebPageUrlPathInfo.WebPageUrlPathWebPageItemID), nameof(WebPageUrlPathInfo.WebPageUrlPathWebsiteChannelID), nameof(DataClassInfo.ClassName), nameof(WebPageUrlPathInfo.WebPageUrlPathContentLanguageID))
-                .ExecuteReaderAsync();
+                .ExecuteReaderAsync()
+                );
             }, new CacheSettings(30, "Authorization_GetPageFromUrlPathAndChannel", relativeUrl, websiteChannelID));
 
             // Convert to Dataset / tables
-            var ds = DatasetFromReader(reader);
-
             if (ds.Tables[0].Rows.Count > 0) {
                 var row = ds.Tables[0].Rows[0];
                 if (langIdToName.TryGetValue((int)row[nameof(WebPageUrlPathInfo.WebPageUrlPathContentLanguageID)], out var langName)) {

@@ -29,6 +29,8 @@ namespace XperienceCommunity.Authorization
                 path.StartsWith(_adminPathRetriever.GetAdminPrefix(), StringComparison.OrdinalIgnoreCase)
                 ||
                 path.StartsWith("/Kentico.", StringComparison.OrdinalIgnoreCase)
+                ||
+                path.StartsWith("/cmsctx.", StringComparison.OrdinalIgnoreCase)
                 ) {
                 await next();
                 return;
