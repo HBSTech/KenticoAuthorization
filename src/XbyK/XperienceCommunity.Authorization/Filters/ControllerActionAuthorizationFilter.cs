@@ -1,4 +1,5 @@
-﻿using Kentico.Web.Mvc.Internal;
+﻿using CMS.Helpers.Internal;
+using Kentico.Web.Mvc.Internal;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -18,10 +19,16 @@ namespace XperienceCommunity.Authorization
         public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
         {
             // Ignore Admin requests
-            var path = context.HttpContext.Request.Path.Value ?? "/admin";
-            if (path.StartsWith(_adminPathRetriever.GetApiPrefix(), StringComparison.OrdinalIgnoreCase)
+            var path = "/" + (context.HttpContext.Request.Path.Value ?? "/admin").TrimStart('/');
+            if (path.StartsWith($"/{_adminPathRetriever.GetApiPrefix()}", StringComparison.OrdinalIgnoreCase)
                 ||
-                path.StartsWith(_adminPathRetriever.GetAdminPrefix(), StringComparison.OrdinalIgnoreCase)
+                path.StartsWith($"/{_adminPathRetriever.GetAdminPrefix()}", StringComparison.OrdinalIgnoreCase)
+                || 
+                path.StartsWith("/Kentico.", StringComparison.OrdinalIgnoreCase)
+                ||
+                path.StartsWith("/cmsctx.", StringComparison.OrdinalIgnoreCase)
+                ||
+                VirtualContext.IsInitialized
                 ) {
                 return;
             }

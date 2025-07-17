@@ -6,7 +6,6 @@ using CMS.DataEngine;
 using CMS.Headless.Internal;
 using CMS.Helpers;
 using CMS.Membership;
-using CMS.Modules;
 using CMS.Websites;
 using CMS.Websites.Internal;
 using CMS.Websites.Routing;
@@ -14,7 +13,7 @@ using Kentico.Content.Web.Mvc;
 using Kentico.Web.Mvc;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Extensions;
-using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
 using System.Data;
 using System.Web;
 using XperienceCommunity.Authorization.Events;
@@ -39,7 +38,7 @@ namespace XperienceCommunity.Authorization.Implementations
         private readonly IInfoProvider<TagInfo> _tagInfoProvider;
         private readonly IContentLanguageRetriever _contentLanguageRetriever;
 
-        public HttpContext? _httpContext { get; }
+        public HttpContext? HttpContext { get; }
 
         public AuthorizationContext(IProgressiveCache progressiveCache,
             IHttpContextAccessor httpContextAccessor,
@@ -70,7 +69,7 @@ namespace XperienceCommunity.Authorization.Implementations
             _memberRoleTagInfoProvider = memberRoleTagInfoProvider;
             _tagInfoProvider = tagInfoProvider;
             _contentLanguageRetriever = contentLanguageRetriever;
-            _httpContext = _httpContextAccessor.HttpContext;
+            HttpContext = _httpContextAccessor.HttpContext;
         }
 
         public async Task<IWebPageFieldsSource?> GetCurrentPageAsync()
@@ -78,16 +77,15 @@ namespace XperienceCommunity.Authorization.Implementations
             IWebPageFieldsSource? foundPage = null;
             var currentSite = await SiteContextSafe();
 
-            if (_httpContext == null) {
+            if (HttpContext == null) {
                 return null;
             }
-            var previewEnabled = GetPreviewEnabled(_httpContext);
 
             // First check Custom Page Finder Logic
             var pageArgs = new GetPageEventArgs(
-                relativeUrl: await GetUrl(UriHelper.GetDisplayUrl(_httpContext.Request), (_httpContext.Request.PathBase.HasValue ? _httpContext.Request.PathBase.Value : "")),
+                relativeUrl: await GetUrl(UriHelper.GetDisplayUrl(HttpContext.Request), (HttpContext.Request.PathBase.HasValue ? HttpContext.Request.PathBase.Value : "")),
                 siteName: _websiteChannelContext.WebsiteChannelName,
-                httpContext: _httpContext,
+                httpContext: HttpContext,
                 culture: await GetCultureAsync(),
                 defaultCulture: currentSite.DefaultLanguage
             );
@@ -99,7 +97,7 @@ namespace XperienceCommunity.Authorization.Implementations
 
             // Use Kentico Page Builder Context
             if (foundPage == null && _webPageDataContextRetriever.TryRetrieve(out var webPageDataContext)) {
-                foundPage = await GetWebPageFieldSource(webPageDataContext.WebPage.WebPageItemID, webPageDataContext.WebPage.ContentTypeName, webPageDataContext.WebPage.LanguageName, webPageDataContext.WebPage.WebsiteChannelID, GetPreviewEnabled(_httpContext));
+                foundPage = await GetWebPageFieldSource(webPageDataContext.WebPage.WebPageItemID, webPageDataContext.WebPage.ContentTypeName, webPageDataContext.WebPage.LanguageName, webPageDataContext.WebPage.WebsiteChannelID, GetPreviewEnabled(HttpContext));
             }
 
             // Try to find the page from web page item tree path, default lookup type
@@ -108,7 +106,7 @@ namespace XperienceCommunity.Authorization.Implementations
             return foundPage;
         }
 
-        private bool GetPreviewEnabled(HttpContext httpContext)
+        private static bool GetPreviewEnabled(HttpContext httpContext)
         {
             try {
                 return httpContext.Kentico().Preview().Enabled;
@@ -123,7 +121,7 @@ namespace XperienceCommunity.Authorization.Implementations
                 return null;
             }
 
-            var previewEnabled = _httpContext != null && GetPreviewEnabled(_httpContext);
+            var previewEnabled = HttpContext != null && GetPreviewEnabled(HttpContext);
 
             return await _progressiveCache.LoadAsync(async cs => {
 
@@ -132,7 +130,7 @@ namespace XperienceCommunity.Authorization.Implementations
                 }
 
                 var query =
-@$"Select {nameof(ContentItemCommonDataInfo.ContentItemCommonDataPageTemplateConfiguration)} 
+@$"Select {nameof(ContentItemCommonDataInfo.ContentItemCommonDataVisualBuilderTemplateConfiguration)} 
     from CMS_ContentItemCommonData 
         where {nameof(ContentItemCommonDataInfo.ContentItemCommonDataContentItemID)} = {page.SystemFields.ContentItemID}
         and {nameof(ContentItemCommonDataInfo.ContentItemCommonDataContentLanguageID)} = {page.SystemFields.ContentItemCommonDataContentLanguageID}
@@ -143,11 +141,10 @@ namespace XperienceCommunity.Authorization.Implementations
 
                 if (ds.Tables[0].Rows.Count > 0) {
                     try {
-                        var templateJson = (string)ds.Tables[0].Rows[0][nameof(ContentItemCommonDataInfo.ContentItemCommonDataPageTemplateConfiguration)];
+                        var templateJson = (string)ds.Tables[0].Rows[0][nameof(ContentItemCommonDataInfo.ContentItemCommonDataVisualBuilderTemplateConfiguration)];
                         if (!string.IsNullOrWhiteSpace(templateJson)) {
-                            var jConfiguration = JObject.Parse(templateJson);
-                            var config = (dynamic)jConfiguration;
-                            return config.identifier;
+                            var configuration = JsonConvert.DeserializeObject<PageTemplateConfiguration>(templateJson);
+                            return configuration?.Identifier ?? string.Empty;
                         }
                     } catch (Exception ex) {
                         _eventLogService.LogException("Authorization.Kentico", "Invalid Template JSON", ex, additionalMessage: "Could not find template name for page with web page item id " + page.SystemFields.WebPageItemID);
@@ -168,14 +165,14 @@ namespace XperienceCommunity.Authorization.Implementations
 
         public async Task<UserContext> GetCurrentUserAsync()
         {
-            if (_httpContext == null) {
+            if (HttpContext == null) {
                 return GetPublicUserContext();
             }
 
             var site = SiteContextSafe();
 
             // Create GetUser Event Arguments
-            var userArgs = new GetUserEventArgs(_httpContext);
+            var userArgs = new GetUserEventArgs(HttpContext);
 
             // Allow them to customize the user context
             var customUserContext = await _authorizationContextCustomizer.GetCustomUserContextAsync(userArgs, AuthorizationEventType.Before);
@@ -184,7 +181,7 @@ namespace XperienceCommunity.Authorization.Implementations
             }
 
             // Get the current user
-            var foundUser = await GetCurrentUserInfoAsync(_httpContext);
+            var foundUser = await GetCurrentUserInfoAsync(HttpContext);
 
             // Allow them to customize the user context again now with the current UserInfo known
             userArgs.FoundUser = foundUser;
@@ -200,10 +197,10 @@ namespace XperienceCommunity.Authorization.Implementations
 
             return await _progressiveCache.LoadAsync(async cs => {
                 if (cs.Cached) {
-                    cs.CacheDependency = CacheHelper.GetCacheDependency(new string[]
-                    {
+                    cs.CacheDependency = CacheHelper.GetCacheDependency(
+                    [
                         $"{MemberRoleTagInfo.OBJECT_TYPE}|all"
-                    });
+                    ]);
                 }
 
                 // get roles
@@ -263,7 +260,7 @@ inner join CMS_ContentLanguage on ContentLanguageID = WebsiteChannelPrimaryConte
         private async Task<string> GetCultureAsync()
         {
             // Can't operate without a context
-            if (_httpContext == null) {
+            if (HttpContext == null) {
                 return "en";
             }
 
@@ -271,12 +268,12 @@ inner join CMS_ContentLanguage on ContentLanguageID = WebsiteChannelPrimaryConte
             string? culture = null;
 
             // Handle Preview, during Route Config the Preview isn't available and isn't really needed, so ignore the thrown exception
-            bool previewEnabled = GetPreviewEnabled(_httpContext);
+            bool previewEnabled = GetPreviewEnabled(HttpContext);
 
             var cultureArgs = new GetCultureEventArgs(
                 defaultCulture: currentSite.DefaultLanguage,
                 siteName: currentSite.ChannelName,
-                request: _httpContext.Request,
+                request: HttpContext.Request,
                 previewEnabled: previewEnabled
             );
 
@@ -288,7 +285,7 @@ inner join CMS_ContentLanguage on ContentLanguageID = WebsiteChannelPrimaryConte
             // If Preview is enabled, use the Kentico Preview CultureName
             if (previewEnabled) {
                 try {
-                    culture = _httpContext.Kentico().Preview().LanguageName;
+                    culture = HttpContext.Kentico().Preview().LanguageName;
                 } catch (Exception) { }
             }
 
@@ -434,26 +431,25 @@ inner join CMS_ContentLanguage on ContentLanguageID = WebsiteChannelPrimaryConte
         {
             var langIdToName = await GetContentLanguageIDToName();
 
-            var previewEnabled = _httpContext != null && GetPreviewEnabled(_httpContext);
-            var reader = await _progressiveCache.LoadAsync(async cs => {
+            var previewEnabled = HttpContext != null && GetPreviewEnabled(HttpContext);
+            var ds = await _progressiveCache.LoadAsync(async cs => {
 
                 if (cs.Cached) {
                     cs.CacheDependency = CacheHelper.GetCacheDependency($"{WebPageUrlPathInfo.OBJECT_TYPE}|all");
                 }
 
-                return await _webPageUrlPathInfoProvider.Get()
+                return DatasetFromReader(await _webPageUrlPathInfoProvider.Get()
                 .Source(x => x.InnerJoin<WebPageItemInfo>(nameof(WebPageUrlPathInfo.WebPageUrlPathWebPageItemID), nameof(WebPageItemInfo.WebPageItemID)))
                 .Source(x => x.InnerJoin<ContentItemInfo>(nameof(WebPageItemInfo.WebPageItemContentItemID), nameof(ContentItemInfo.ContentItemID)))
                 .Source(x => x.InnerJoin<DataClassInfo>(nameof(ContentItemInfo.ContentItemContentTypeID), nameof(DataClassInfo.ClassID)))
                 .WhereEquals(nameof(WebPageUrlPathInfo.WebPageUrlPath), relativeUrl.TrimStart('~').TrimStart('/'))
                 .WhereEquals(nameof(WebPageUrlPathInfo.WebPageUrlPathWebsiteChannelID), websiteChannelID)
                 .Columns(nameof(WebPageUrlPathInfo.WebPageUrlPathWebPageItemID), nameof(WebPageUrlPathInfo.WebPageUrlPathWebsiteChannelID), nameof(DataClassInfo.ClassName), nameof(WebPageUrlPathInfo.WebPageUrlPathContentLanguageID))
-                .ExecuteReaderAsync();
+                .ExecuteReaderAsync()
+                );
             }, new CacheSettings(30, "Authorization_GetPageFromUrlPathAndChannel", relativeUrl, websiteChannelID));
 
             // Convert to Dataset / tables
-            var ds = DatasetFromReader(reader);
-
             if (ds.Tables[0].Rows.Count > 0) {
                 var row = ds.Tables[0].Rows[0];
                 if (langIdToName.TryGetValue((int)row[nameof(WebPageUrlPathInfo.WebPageUrlPathContentLanguageID)], out var langName)) {

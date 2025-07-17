@@ -38,9 +38,9 @@ namespace XperienceCommunity.Authorization.Implementations
                 }
 
                 // Check member Roles logic
-                if (!authorized && permissions.MemberRoles.Length == 0) {
+                if (!authorized && permissions.MemberRoles.Length != 0) {
                     onlyAuthenticatedCheck = false;
-                    authorized = (user.Roles.Intersect(permissions.MemberRoles, StringComparer.InvariantCultureIgnoreCase).Any());
+                    authorized = user.Roles.Any(x => permissions.MemberRoles.Contains(x, StringComparer.InvariantCultureIgnoreCase));
                 }
             }
 
